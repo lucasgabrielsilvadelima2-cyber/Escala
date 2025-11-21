@@ -302,26 +302,92 @@ if not is_gestor:
 
     elif pagina == "🔁 Troca de Folga":
         st.subheader("Solicitar Troca de Folga / Horário")
-        tipo = st.selectbox("Tipo", ["Troca de folga", "Troca de horário"])
+        
+        # Radio buttons para tipo de troca
+        tipo = st.radio("Tipo", ["Troca de folga", "Troca de horário"], horizontal=True)
+        
         data_origem = st.date_input("Data Original")
         nova_data = st.date_input("Nova Data")
-        pessoa = st.text_input("Pessoa para troca")
+        
+        # Função para buscar agentes disponíveis na data selecionada
+        def obter_agentes_disponiveis(data_selecionada):
+            if escala.empty or pd.isna(data_selecionada):
+                return []
+            
+            df_escala = escala.copy()
+            # Tentar parsear data no formato DD/MM/YYYY
+            try:
+                df_escala["Data"] = pd.to_datetime(df_escala["Data"], format="%d/%m/%Y", errors="coerce").dt.date
+            except:
+                df_escala["Data"] = pd.to_datetime(df_escala["Data"], errors="coerce").dt.date
+            
+            # Filtrar pela data selecionada
+            df_data = df_escala[df_escala["Data"] == data_selecionada]
+            
+            agentes_disponiveis = []
+            for _, row in df_data.iterrows():
+                nome = str(row.get("Nome", "")).strip()
+                if not nome or nome.lower() == st.session_state.usuario.lower():
+                    continue  # Pular o próprio usuário
+                
+                # Tentar diferentes nomes de coluna (pode ter encoding issues)
+                horario_col = row.get("Horário", row.get("HorÃ¡rio", ""))
+                horario_str = str(horario_col).strip()
+                
+                # Verificar se não é folga
+                is_folga = "folga" in horario_str.lower() or "off" in horario_str.lower()
+                if is_folga:
+                    continue  # Pular folgas
+                
+                # Formatar horário para exibição
+                if horario_str and horario_str != "nan":
+                    agentes_disponiveis.append({
+                        "nome": nome,
+                        "horario": horario_str
+                    })
+            
+            return agentes_disponiveis
+        
+        # Campo de pessoa para troca - mostra agentes disponíveis quando data é selecionada
+        pessoa = None
+        if nova_data:
+            agentes = obter_agentes_disponiveis(nova_data)
+            if agentes:
+                # Criar lista de opções com nome e horário
+                opcoes_agentes = [f"{ag['nome']} - {ag['horario']}" for ag in agentes]
+                opcoes_agentes.insert(0, "Selecione um agente...")
+                pessoa_selecionada = st.selectbox("Pessoa para troca", opcoes_agentes)
+                if pessoa_selecionada and pessoa_selecionada != "Selecione um agente...":
+                    # Extrair apenas o nome (antes do " - ")
+                    pessoa = pessoa_selecionada.split(" - ")[0].strip()
+            else:
+                st.info("Nenhum agente disponível encontrado para esta data.")
+                pessoa_input = st.text_input("Pessoa para troca (digite manualmente)")
+                pessoa = pessoa_input.strip() if pessoa_input else None
+        else:
+            st.info("Selecione uma data para ver os agentes disponíveis.")
+            pessoa_input = st.text_input("Pessoa para troca")
+            pessoa = pessoa_input.strip() if pessoa_input else None
+        
         motivo = st.text_area("Motivo")
         if st.button("Enviar Troca"):
-            nova = pd.DataFrame([{
-                "Nome": st.session_state.usuario,
-                "Tipo": tipo,
-                "Data Origem": data_origem,
-                "Nova Data": nova_data,
-                "Motivo": motivo,
-                "Status": "Pendente",
-                "PessoaTroca": pessoa,
-                "Aprovador": ""
-            }])
-            trocas = pd.concat([trocas, nova], ignore_index=True)
-            trocas.to_csv(PATH_TROCA_FOLGA, index=False, encoding="utf-8-sig")
-            enviar_notificacao("adm", f"{st.session_state.usuario} solicitou {tipo.lower()}")
-            st.success("Solicitação enviada!")
+            if not pessoa:
+                st.error("Por favor, selecione ou digite uma pessoa para troca.")
+            else:
+                nova = pd.DataFrame([{
+                    "Nome": st.session_state.usuario,
+                    "Tipo": tipo,
+                    "Data Origem": data_origem,
+                    "Nova Data": nova_data,
+                    "Motivo": motivo,
+                    "Status": "Pendente",
+                    "PessoaTroca": pessoa,
+                    "Aprovador": ""
+                }])
+                trocas = pd.concat([trocas, nova], ignore_index=True)
+                trocas.to_csv(PATH_TROCA_FOLGA, index=False, encoding="utf-8-sig")
+                enviar_notificacao("adm", f"{st.session_state.usuario} solicitou {tipo.lower()}")
+                st.success("Solicitação enviada!")
 
         st.subheader("Minhas Solicitações")
         minhas = trocas[trocas["Nome"] == st.session_state.usuario]
